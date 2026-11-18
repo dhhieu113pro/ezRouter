@@ -7,19 +7,16 @@
  *
  * This verifier pins the current contract:
  *   - PlaygroundTab derives its options from api.getModels() (no static lists).
- *   - IntegrationTab offers the generic upstream model examples + proxy-key.
- *   - Thinking levels include xhigh / max / ultra in both tabs.
- *   - No ag/* or cx/* model literals leak back into these components.
+ *   - Thinking levels include xhigh / max / ultra.
+ *   - No ag/* or cx/* model literals leak back into this component.
  */
 
 const fs = require('fs');
 const path = require('path');
 
 const playgroundPath = path.resolve(__dirname, '../src/components/PlaygroundTab.tsx');
-const integrationPath = path.resolve(__dirname, '../src/components/IntegrationTab.tsx');
 
 const playgroundContent = fs.readFileSync(playgroundPath, 'utf8');
-const integrationContent = fs.readFileSync(integrationPath, 'utf8');
 
 const THINKING_LEVELS = ['xhigh', 'max', 'ultra'];
 
@@ -53,47 +50,15 @@ const checks = [
     detail: 'Playground must allow typing an arbitrary model id',
   },
   {
-    name: 'IntegrationTab model selection includes gpt-4o-mini',
-    test: () => integrationContent.includes('value="gpt-4o-mini"'),
-    detail: 'IntegrationTab select dropdown must include gpt-4o-mini',
-  },
-  {
-    name: 'IntegrationTab model selection includes gpt-4o',
-    test: () => integrationContent.includes('value="gpt-4o"'),
-    detail: 'IntegrationTab select dropdown must include gpt-4o',
-  },
-  {
-    name: 'IntegrationTab model selection includes claude-sonnet-4-5',
-    test: () => integrationContent.includes('claude-sonnet-4-5'),
-    detail: 'IntegrationTab select dropdown must include a current Claude model id',
-  },
-  {
-    name: 'IntegrationTab model selection includes an OpenRouter-prefixed model',
-    test: () => integrationContent.includes('value="openrouter/'),
-    detail: 'IntegrationTab must show that OpenRouter routing uses the openrouter/ prefix',
-  },
-  {
-    name: 'IntegrationTab uses the proxy-key placeholder credential',
-    test: () => integrationContent.includes('proxy-key'),
-    detail: 'IntegrationTab examples must reference the proxy-key placeholder',
-  },
-  {
     name: 'Playground thinking level options include xhigh, max, and ultra',
     test: () => hasThinkingLevels(playgroundContent),
     detail: 'Playground thinking level select must include xhigh, max, and ultra options',
   },
   {
-    name: 'IntegrationTab thinking level options include xhigh, max, and ultra',
-    test: () => hasThinkingLevels(integrationContent),
-    detail: 'IntegrationTab thinking level select must include xhigh, max, and ultra options',
-  },
-  {
-    name: 'No legacy ag/* or cx/* model literals remain in either tab',
+    name: 'No legacy ag/* or cx/* model literals remain in the tab',
     test: () =>
       !/['"]ag\//.test(playgroundContent) &&
-      !/['"]cx\//.test(playgroundContent) &&
-      !/['"]ag\//.test(integrationContent) &&
-      !/['"]cx\//.test(integrationContent),
+      !/['"]cx\//.test(playgroundContent),
     detail: 'Antigravity (ag/*) and Codex (cx/*) model literals must be fully removed',
   },
 ];

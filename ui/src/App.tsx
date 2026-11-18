@@ -18,7 +18,6 @@ import { useI18n } from './i18n';
 import { OverviewTab } from './components/OverviewTab';
 import { PlaygroundTab } from './components/PlaygroundTab';
 import { ImagesTab } from './components/ImagesTab';
-import { IntegrationTab } from './components/IntegrationTab';
 import { RequestsTab } from './components/RequestsTab';
 import { ProvidersTab } from './components/ProvidersTab';
 import { CombosTab } from './components/CombosTab';
@@ -141,7 +140,6 @@ export const App: React.FC = () => {
 
   const tabTitles: Record<TabType, string> = {
     overview: t('nav.overview'),
-    integration: t('nav.integration'),
     traffic: t('nav.traffic'),
     playground: t('nav.playground'),
     images: t('nav.images'),
@@ -214,8 +212,6 @@ export const App: React.FC = () => {
               onSelectTab={setCurrentTab}
             />
           )}
-
-          {currentTab === 'integration' && <IntegrationTab />}
 
           {currentTab === 'playground' && (
             <PlaygroundTab adminKey={adminKey} />

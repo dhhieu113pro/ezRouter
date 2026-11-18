@@ -8,7 +8,6 @@ import {
   IconX,
   IconPlayground,
   IconImage,
-  IconBookOpen,
   IconShield,
   IconTerminal,
   EzRouterMark,
@@ -19,7 +18,6 @@ import { ThemeSwitcher, ThemeMode } from './ThemeSwitcher';
 
 export type TabType =
   | 'overview'
-  | 'integration'
   | 'traffic'
   | 'playground'
   | 'images'
@@ -105,11 +103,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'logs' as TabType,
       label: t('nav.logsShort'),
       icon: <IconTerminal size={18} />,
-    },
-    {
-      id: 'integration' as TabType,
-      label: t('nav.integration'),
-      icon: <IconBookOpen size={18} />,
     },
   ];
 

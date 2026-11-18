@@ -277,7 +277,6 @@ def run_checks(url: str, admin_key: str):
             ("token_saver", "Token Saver"),
             ("api_keys", "Khóa API"),
             ("logs", "Nhật ký"),
-            ("integration", "Tích hợp"),
         ]
         
         for tab_id, tab_label in tabs:
