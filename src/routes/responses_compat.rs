@@ -1,16 +1,16 @@
 //! Translation between the OpenAI **Responses API** (`/v1/responses`) and the
 //! internal **Chat Completions** pipeline (`/v1/chat/completions`).
 //!
-//! Codex CLI only speaks the Responses API, but ezRouter's own upstreams
-//! (combos such as `all`, external providers and the Google Antigravity pool)
+//! OpenAI's Responses API clients only speak the Responses API, but ezRouter's
+//! own upstreams (combos such as `all` and external providers)
 //! are chat-completion based. This module converts in both directions:
 //!
 //! - `responses_payload_to_chat`: Responses request  -> chat request
 //! - `chat_json_to_responses`:      chat response    -> Responses response
 //! - `ChatSseToResponsesStream`:    chat SSE chunks  -> Responses SSE events
 //!
-//! Codex models (`cx/...`) keep using the raw Codex passthrough in
-//! `routes::responses` and never go through this module.
+//! The raw `/v1/responses` passthrough in `routes::responses` never goes
+//! through this module.
 
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -69,12 +69,11 @@ fn normalize_role(role: &str) -> &str {
     }
 }
 
-fn push_input_item(
-    item: &serde_json::Value,
-    messages: &mut Vec<ChatMessage>,
-    warn_ctx: &str,
-) {
-    let ty = item.get("type").and_then(|t| t.as_str()).unwrap_or("message");
+fn push_input_item(item: &serde_json::Value, messages: &mut Vec<ChatMessage>, warn_ctx: &str) {
+    let ty = item
+        .get("type")
+        .and_then(|t| t.as_str())
+        .unwrap_or("message");
     match ty {
         "message" => {
             let role = item.get("role").and_then(|r| r.as_str()).unwrap_or("user");
@@ -227,23 +226,17 @@ pub fn responses_payload_to_chat(
     // 2. Input: either a plain string or an array of typed items.
     match payload.get("input") {
         None | Some(serde_json::Value::Null) => {
-            return Err(AppError::BadRequest(
-                "input cannot be empty".to_string(),
-            ));
+            return Err(AppError::BadRequest("input cannot be empty".to_string()));
         }
         Some(serde_json::Value::String(text)) => {
             if text.trim().is_empty() {
-                return Err(AppError::BadRequest(
-                    "input cannot be empty".to_string(),
-                ));
+                return Err(AppError::BadRequest("input cannot be empty".to_string()));
             }
             messages.push(ChatMessage::user(text.clone()));
         }
         Some(serde_json::Value::Array(items)) => {
             if items.is_empty() {
-                return Err(AppError::BadRequest(
-                    "input cannot be empty".to_string(),
-                ));
+                return Err(AppError::BadRequest("input cannot be empty".to_string()));
             }
             for item in items {
                 push_input_item(item, &mut messages, "responses->chat");
@@ -267,12 +260,26 @@ pub fn responses_payload_to_chat(
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
 
+    // Only forward `tool_choice` when the converted tool list is non-empty.
+    // Clients commonly send `tool_choice: "auto"`, and several chat upstreams
+    // reject it with HTTP 200 + an SSE error when no tools are present.
+    let tools = convert_tools(payload);
+    let has_tools = tools
+        .as_ref()
+        .and_then(|t| t.as_array())
+        .is_some_and(|t| !t.is_empty());
+    let tool_choice = if has_tools {
+        convert_tool_choice(payload)
+    } else {
+        None
+    };
+
     Ok(ChatCompletionRequest {
         model: requested_model.to_string(),
         messages,
         stream: Some(stream),
-        tools: convert_tools(payload),
-        tool_choice: convert_tool_choice(payload),
+        tools,
+        tool_choice,
         temperature: payload
             .get("temperature")
             .and_then(|t| t.as_f64())
@@ -287,15 +294,40 @@ pub fn responses_payload_to_chat(
             .map(|t| t as u32),
         max_completion_tokens: None,
         stream_options: None,
-        response_format: payload
-            .get("text")
-            .and_then(|t| t.get("format"))
-            .filter(|f| f.get("type").and_then(|v| v.as_str()) == Some("json_schema"))
-            .cloned(),
+        response_format: convert_response_format(payload),
         stop: None,
         user: None,
         reasoning_effort: None,
     })
+}
+
+/// Convert the Responses `text.format` block into a Chat Completions
+/// `response_format`.
+///
+/// The two APIs use different shapes:
+/// - Responses: `{"type":"json_schema","name":..,"schema":..,"strict":..}`
+/// - Chat:      `{"type":"json_schema","json_schema":{"name":..,"schema":..,"strict":..}}`
+///
+/// Passing the Responses shape through verbatim makes chat upstreams reject the
+/// request (`missing field json_schema`), which breaks structured-output extraction.
+fn convert_response_format(payload: &serde_json::Value) -> Option<serde_json::Value> {
+    let format = payload.get("text")?.get("format")?;
+    match format.get("type").and_then(|v| v.as_str())? {
+        "json_schema" => {
+            let mut schema = serde_json::Map::new();
+            for key in ["name", "schema", "strict", "description"] {
+                if let Some(value) = format.get(key) {
+                    schema.insert(key.to_string(), value.clone());
+                }
+            }
+            Some(serde_json::json!({
+                "type": "json_schema",
+                "json_schema": schema,
+            }))
+        }
+        "json_object" => Some(serde_json::json!({ "type": "json_object" })),
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -352,14 +384,20 @@ fn now_unix() -> u64 {
 ///
 /// `chat` is the raw upstream JSON (choices/usage), `requested_model` is the
 /// model id the client asked for.
-pub fn chat_json_to_responses(chat: &serde_json::Value, requested_model: &str) -> serde_json::Value {
+pub fn chat_json_to_responses(
+    chat: &serde_json::Value,
+    requested_model: &str,
+) -> serde_json::Value {
     let choice = chat
         .get("choices")
         .and_then(|c| c.as_array())
         .and_then(|c| c.first())
         .cloned()
         .unwrap_or(serde_json::Value::Null);
-    let message = choice.get("message").cloned().unwrap_or(serde_json::Value::Null);
+    let message = choice
+        .get("message")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
 
     let text = message
         .get("content")
@@ -399,8 +437,14 @@ pub fn chat_json_to_responses(chat: &serde_json::Value, requested_model: &str) -
 
     let finish = choice.get("finish_reason").and_then(|f| f.as_str());
     let (status, incomplete) = match finish {
-        Some("length") => ("incomplete", serde_json::json!({ "reason": "max_output_tokens" })),
-        Some("content_filter") => ("incomplete", serde_json::json!({ "reason": "content_filter" })),
+        Some("length") => (
+            "incomplete",
+            serde_json::json!({ "reason": "max_output_tokens" }),
+        ),
+        Some("content_filter") => (
+            "incomplete",
+            serde_json::json!({ "reason": "content_filter" }),
+        ),
         _ => ("completed", serde_json::Value::Null),
     };
 
@@ -438,7 +482,7 @@ struct OpenToolCall {
 }
 
 /// Stream transformer that converts an upstream chat-completions SSE stream
-/// into the Responses API event stream expected by Codex and the OpenAI SDK.
+/// into the Responses API event stream expected by Responses API clients.
 pub struct ChatSseToResponsesStream {
     inner: Pin<Box<dyn Stream<Item = Result<Bytes, AppError>> + Send>>,
     buffer: Vec<u8>,
@@ -523,18 +567,24 @@ impl ChatSseToResponsesStream {
                 "status": "in_progress",
                 "content": []
             });
-            out.push(Self::sse("response.output_item.added", &serde_json::json!({
-                "type": "response.output_item.added",
-                "output_index": self.output_index,
-                "item": item,
-            })));
-            out.push(Self::sse("response.content_part.added", &serde_json::json!({
-                "type": "response.content_part.added",
-                "item_id": self.msg_item_id,
-                "output_index": self.output_index,
-                "content_index": 0,
-                "part": { "type": "output_text", "text": "", "annotations": [] }
-            })));
+            out.push(Self::sse(
+                "response.output_item.added",
+                &serde_json::json!({
+                    "type": "response.output_item.added",
+                    "output_index": self.output_index,
+                    "item": item,
+                }),
+            ));
+            out.push(Self::sse(
+                "response.content_part.added",
+                &serde_json::json!({
+                    "type": "response.content_part.added",
+                    "item_id": self.msg_item_id,
+                    "output_index": self.output_index,
+                    "content_index": 0,
+                    "part": { "type": "output_text", "text": "", "annotations": [] }
+                }),
+            ));
         }
     }
 
@@ -549,11 +599,14 @@ impl ChatSseToResponsesStream {
                 "content_index": 0,
                 "part": { "type": "output_text", "text": self.msg_text.clone(), "annotations": [] }
             })));
-            out.push(Self::sse("response.output_item.done", &serde_json::json!({
-                "type": "response.output_item.done",
-                "output_index": self.output_index,
-                "item": item,
-            })));
+            out.push(Self::sse(
+                "response.output_item.done",
+                &serde_json::json!({
+                    "type": "response.output_item.done",
+                    "output_index": self.output_index,
+                    "item": item,
+                }),
+            ));
             self.output_index += 1;
         }
     }
@@ -565,23 +618,29 @@ impl ChatSseToResponsesStream {
             if let Some(call) = self.open_calls.get_mut(&idx) {
                 if !call.finalized {
                     call.finalized = true;
-                    out.push(Self::sse("response.function_call_arguments.done", &serde_json::json!({
-                        "type": "response.function_call_arguments.done",
-                        "item_id": call.item_id,
-                        "output_index": self.output_index,
-                        "arguments": call.arguments.clone(),
-                    })));
+                    out.push(Self::sse(
+                        "response.function_call_arguments.done",
+                        &serde_json::json!({
+                            "type": "response.function_call_arguments.done",
+                            "item_id": call.item_id,
+                            "output_index": self.output_index,
+                            "arguments": call.arguments.clone(),
+                        }),
+                    ));
                     let item = function_call_item(
                         &call.item_id.clone(),
                         &call.call_id.clone(),
                         &call.name.clone(),
                         &call.arguments.clone(),
                     );
-                    out.push(Self::sse("response.output_item.done", &serde_json::json!({
-                        "type": "response.output_item.done",
-                        "output_index": self.output_index,
-                        "item": item,
-                    })));
+                    out.push(Self::sse(
+                        "response.output_item.done",
+                        &serde_json::json!({
+                            "type": "response.output_item.done",
+                            "output_index": self.output_index,
+                            "item": item,
+                        }),
+                    ));
                     self.output_index += 1;
                 }
             }
@@ -606,10 +665,13 @@ impl ChatSseToResponsesStream {
             })));
         }
         response["output_text"] = serde_json::Value::String(self.msg_text.clone());
-        out.push(Self::sse("response.completed", &serde_json::json!({
-            "type": "response.completed",
-            "response": response,
-        })));
+        out.push(Self::sse(
+            "response.completed",
+            &serde_json::json!({
+                "type": "response.completed",
+                "response": response,
+            }),
+        ));
     }
 
     /// Convert one complete chat SSE `data:` payload into Responses events.
@@ -642,20 +704,26 @@ impl ChatSseToResponsesStream {
 
         self.ensure_created(out);
 
-        let delta = choice.get("delta").cloned().unwrap_or(serde_json::Value::Null);
+        let delta = choice
+            .get("delta")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
 
         // Text deltas.
         if let Some(text) = delta.get("content").and_then(|c| c.as_str()) {
             if !text.is_empty() {
                 self.ensure_message_open(out);
                 self.msg_text.push_str(text);
-                out.push(Self::sse("response.output_text.delta", &serde_json::json!({
-                    "type": "response.output_text.delta",
-                    "item_id": self.msg_item_id,
-                    "output_index": self.output_index,
-                    "content_index": 0,
-                    "delta": text,
-                })));
+                out.push(Self::sse(
+                    "response.output_text.delta",
+                    &serde_json::json!({
+                        "type": "response.output_text.delta",
+                        "item_id": self.msg_item_id,
+                        "output_index": self.output_index,
+                        "content_index": 0,
+                        "delta": text,
+                    }),
+                ));
             }
         }
 
@@ -685,11 +753,14 @@ impl ChatSseToResponsesStream {
                         "arguments": "",
                         "status": "in_progress"
                     });
-                    out.push(Self::sse("response.output_item.added", &serde_json::json!({
-                        "type": "response.output_item.added",
-                        "output_index": self.output_index,
-                        "item": item,
-                    })));
+                    out.push(Self::sse(
+                        "response.output_item.added",
+                        &serde_json::json!({
+                            "type": "response.output_item.added",
+                            "output_index": self.output_index,
+                            "item": item,
+                        }),
+                    ));
                     self.output_index += 1;
                     self.open_calls.insert(
                         idx,
@@ -710,12 +781,15 @@ impl ChatSseToResponsesStream {
                 {
                     if !args.is_empty() {
                         entry.arguments.push_str(args);
-                        out.push(Self::sse("response.function_call_arguments.delta", &serde_json::json!({
-                            "type": "response.function_call_arguments.delta",
-                            "item_id": entry.item_id,
-                            "output_index": self.output_index,
-                            "delta": args,
-                        })));
+                        out.push(Self::sse(
+                            "response.function_call_arguments.delta",
+                            &serde_json::json!({
+                                "type": "response.function_call_arguments.delta",
+                                "item_id": entry.item_id,
+                                "output_index": self.output_index,
+                                "delta": args,
+                            }),
+                        ));
                     }
                 }
                 if let Some(id) = tc.get("id").and_then(|c| c.as_str()) {
@@ -846,7 +920,10 @@ mod tests {
         assert_eq!(req.model, "all");
         assert_eq!(req.messages.len(), 2);
         assert_eq!(req.messages[0].role, "system");
-        assert_eq!(req.messages[0].content.as_ref().unwrap().text(), "Be concise.");
+        assert_eq!(
+            req.messages[0].content.as_ref().unwrap().text(),
+            "Be concise."
+        );
         assert_eq!(req.messages[1].role, "user");
         assert_eq!(req.messages[1].content.as_ref().unwrap().text(), "Hello");
         assert_eq!(req.stream, Some(true));
@@ -875,7 +952,10 @@ mod tests {
         assert_eq!(req.messages.len(), 4);
         assert_eq!(req.messages[0].role, "system");
         assert_eq!(req.messages[1].role, "user");
-        assert!(matches!(req.messages[1].content, Some(MessageContent::Parts(_))));
+        assert!(matches!(
+            req.messages[1].content,
+            Some(MessageContent::Parts(_))
+        ));
         assert_eq!(req.messages[2].role, "assistant");
         assert!(req.messages[2].tool_calls.is_some());
         assert_eq!(req.messages[3].role, "tool");
@@ -885,6 +965,55 @@ mod tests {
         assert_eq!(tools[0]["function"]["name"], "get_weather");
         assert_eq!(req.tool_choice.unwrap()["function"]["name"], "get_weather");
         assert_eq!(req.max_tokens, Some(256));
+    }
+
+    #[test]
+    fn test_json_schema_text_format_is_nested_for_chat() {
+        let payload = serde_json::json!({
+            "model": "all",
+            "input": "extract",
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "memory",
+                    "schema": { "type": "object", "properties": { "a": { "type": "string" } } },
+                    "strict": true
+                }
+            }
+        });
+        let req = responses_payload_to_chat(&payload, "all").unwrap();
+        let rf = req.response_format.expect("response_format");
+        assert_eq!(rf["type"], "json_schema");
+        assert_eq!(rf["json_schema"]["name"], "memory");
+        assert_eq!(rf["json_schema"]["strict"], true);
+        assert_eq!(rf["json_schema"]["schema"]["type"], "object");
+        assert!(rf.get("name").is_none(), "must not be flattened");
+    }
+
+    #[test]
+    fn test_plain_text_format_has_no_response_format() {
+        let payload = serde_json::json!({
+            "model": "all",
+            "input": "hi",
+            "text": { "format": { "type": "text" } }
+        });
+        let req = responses_payload_to_chat(&payload, "all").unwrap();
+        assert!(req.response_format.is_none());
+    }
+
+    #[test]
+    fn test_tool_choice_dropped_when_no_tools() {
+        let payload = serde_json::json!({
+            "model": "all",
+            "input": "hi",
+            "tool_choice": "auto"
+        });
+        let req = responses_payload_to_chat(&payload, "all").unwrap();
+        assert!(req.tools.is_none());
+        assert!(
+            req.tool_choice.is_none(),
+            "tool_choice must be dropped when tools are absent"
+        );
     }
 
     #[test]
@@ -949,7 +1078,7 @@ mod tests {
         let mut acc = String::new();
         while let Some(item) = stream.next().await {
             let bytes = item.unwrap();
-            acc.push_str(&String::from_utf8(bytes.to_vec()).unwrap());
+            acc.push_str(core::str::from_utf8(&bytes).unwrap());
         }
 
         assert!(acc.contains("event: response.created"));
@@ -979,7 +1108,7 @@ mod tests {
         let mut stream = ChatSseToResponsesStream::new(inner, "all".to_string());
         let mut acc = String::new();
         while let Some(item) = stream.next().await {
-            acc.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+            acc.push_str(core::str::from_utf8(&item.unwrap()).unwrap());
         }
 
         assert!(acc.contains("event: response.output_item.added"));
@@ -1004,7 +1133,7 @@ mod tests {
         let mut stream = ChatSseToResponsesStream::new(inner, "all".to_string());
         let mut acc = String::new();
         while let Some(item) = stream.next().await {
-            acc.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+            acc.push_str(core::str::from_utf8(&item.unwrap()).unwrap());
         }
         assert!(acc.contains("\"delta\":\"He\""));
         assert!(acc.contains("\"delta\":\"y\""));
@@ -1019,7 +1148,7 @@ mod tests {
         let mut stream = ChatSseToResponsesStream::new(inner, "all".to_string());
         let mut acc = String::new();
         while let Some(item) = stream.next().await {
-            acc.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+            acc.push_str(core::str::from_utf8(&item.unwrap()).unwrap());
         }
         assert!(acc.contains("event: response.created"));
         assert!(acc.contains("event: response.completed"));
