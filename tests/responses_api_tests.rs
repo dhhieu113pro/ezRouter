@@ -202,7 +202,10 @@ async fn test_responses_db_logging_status_and_tokens() {
         // Usage is whatever the mock provider computed for this model id; the
         // contract under test is that tokens are persisted and self-consistent.
         assert!(item.prompt_tokens > 0, "prompt tokens must be recorded");
-        assert!(item.completion_tokens > 0, "completion tokens must be recorded");
+        assert!(
+            item.completion_tokens > 0,
+            "completion tokens must be recorded"
+        );
         assert_eq!(
             item.total_tokens,
             item.prompt_tokens + item.completion_tokens,
@@ -273,10 +276,7 @@ async fn test_db_status_filter_and_summary_includes_completed_legacy() {
 
     // 2. Summary counts all three as ok
     let summary = state.db.get_request_summary().unwrap();
-    let model_sum = summary
-        .iter()
-        .find(|s| s.model == "openai/gpt-4o")
-        .unwrap();
+    let model_sum = summary.iter().find(|s| s.model == "openai/gpt-4o").unwrap();
     assert_eq!(model_sum.requests, 4);
     assert_eq!(model_sum.ok, 3);
     assert_eq!(model_sum.errors, 1);

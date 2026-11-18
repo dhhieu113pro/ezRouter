@@ -69,12 +69,11 @@ fn normalize_role(role: &str) -> &str {
     }
 }
 
-fn push_input_item(
-    item: &serde_json::Value,
-    messages: &mut Vec<ChatMessage>,
-    warn_ctx: &str,
-) {
-    let ty = item.get("type").and_then(|t| t.as_str()).unwrap_or("message");
+fn push_input_item(item: &serde_json::Value, messages: &mut Vec<ChatMessage>, warn_ctx: &str) {
+    let ty = item
+        .get("type")
+        .and_then(|t| t.as_str())
+        .unwrap_or("message");
     match ty {
         "message" => {
             let role = item.get("role").and_then(|r| r.as_str()).unwrap_or("user");
@@ -227,23 +226,17 @@ pub fn responses_payload_to_chat(
     // 2. Input: either a plain string or an array of typed items.
     match payload.get("input") {
         None | Some(serde_json::Value::Null) => {
-            return Err(AppError::BadRequest(
-                "input cannot be empty".to_string(),
-            ));
+            return Err(AppError::BadRequest("input cannot be empty".to_string()));
         }
         Some(serde_json::Value::String(text)) => {
             if text.trim().is_empty() {
-                return Err(AppError::BadRequest(
-                    "input cannot be empty".to_string(),
-                ));
+                return Err(AppError::BadRequest("input cannot be empty".to_string()));
             }
             messages.push(ChatMessage::user(text.clone()));
         }
         Some(serde_json::Value::Array(items)) => {
             if items.is_empty() {
-                return Err(AppError::BadRequest(
-                    "input cannot be empty".to_string(),
-                ));
+                return Err(AppError::BadRequest("input cannot be empty".to_string()));
             }
             for item in items {
                 push_input_item(item, &mut messages, "responses->chat");
@@ -391,14 +384,20 @@ fn now_unix() -> u64 {
 ///
 /// `chat` is the raw upstream JSON (choices/usage), `requested_model` is the
 /// model id the client asked for.
-pub fn chat_json_to_responses(chat: &serde_json::Value, requested_model: &str) -> serde_json::Value {
+pub fn chat_json_to_responses(
+    chat: &serde_json::Value,
+    requested_model: &str,
+) -> serde_json::Value {
     let choice = chat
         .get("choices")
         .and_then(|c| c.as_array())
         .and_then(|c| c.first())
         .cloned()
         .unwrap_or(serde_json::Value::Null);
-    let message = choice.get("message").cloned().unwrap_or(serde_json::Value::Null);
+    let message = choice
+        .get("message")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
 
     let text = message
         .get("content")
@@ -438,8 +437,14 @@ pub fn chat_json_to_responses(chat: &serde_json::Value, requested_model: &str) -
 
     let finish = choice.get("finish_reason").and_then(|f| f.as_str());
     let (status, incomplete) = match finish {
-        Some("length") => ("incomplete", serde_json::json!({ "reason": "max_output_tokens" })),
-        Some("content_filter") => ("incomplete", serde_json::json!({ "reason": "content_filter" })),
+        Some("length") => (
+            "incomplete",
+            serde_json::json!({ "reason": "max_output_tokens" }),
+        ),
+        Some("content_filter") => (
+            "incomplete",
+            serde_json::json!({ "reason": "content_filter" }),
+        ),
         _ => ("completed", serde_json::Value::Null),
     };
 
@@ -562,18 +567,24 @@ impl ChatSseToResponsesStream {
                 "status": "in_progress",
                 "content": []
             });
-            out.push(Self::sse("response.output_item.added", &serde_json::json!({
-                "type": "response.output_item.added",
-                "output_index": self.output_index,
-                "item": item,
-            })));
-            out.push(Self::sse("response.content_part.added", &serde_json::json!({
-                "type": "response.content_part.added",
-                "item_id": self.msg_item_id,
-                "output_index": self.output_index,
-                "content_index": 0,
-                "part": { "type": "output_text", "text": "", "annotations": [] }
-            })));
+            out.push(Self::sse(
+                "response.output_item.added",
+                &serde_json::json!({
+                    "type": "response.output_item.added",
+                    "output_index": self.output_index,
+                    "item": item,
+                }),
+            ));
+            out.push(Self::sse(
+                "response.content_part.added",
+                &serde_json::json!({
+                    "type": "response.content_part.added",
+                    "item_id": self.msg_item_id,
+                    "output_index": self.output_index,
+                    "content_index": 0,
+                    "part": { "type": "output_text", "text": "", "annotations": [] }
+                }),
+            ));
         }
     }
 
@@ -588,11 +599,14 @@ impl ChatSseToResponsesStream {
                 "content_index": 0,
                 "part": { "type": "output_text", "text": self.msg_text.clone(), "annotations": [] }
             })));
-            out.push(Self::sse("response.output_item.done", &serde_json::json!({
-                "type": "response.output_item.done",
-                "output_index": self.output_index,
-                "item": item,
-            })));
+            out.push(Self::sse(
+                "response.output_item.done",
+                &serde_json::json!({
+                    "type": "response.output_item.done",
+                    "output_index": self.output_index,
+                    "item": item,
+                }),
+            ));
             self.output_index += 1;
         }
     }
@@ -604,23 +618,29 @@ impl ChatSseToResponsesStream {
             if let Some(call) = self.open_calls.get_mut(&idx) {
                 if !call.finalized {
                     call.finalized = true;
-                    out.push(Self::sse("response.function_call_arguments.done", &serde_json::json!({
-                        "type": "response.function_call_arguments.done",
-                        "item_id": call.item_id,
-                        "output_index": self.output_index,
-                        "arguments": call.arguments.clone(),
-                    })));
+                    out.push(Self::sse(
+                        "response.function_call_arguments.done",
+                        &serde_json::json!({
+                            "type": "response.function_call_arguments.done",
+                            "item_id": call.item_id,
+                            "output_index": self.output_index,
+                            "arguments": call.arguments.clone(),
+                        }),
+                    ));
                     let item = function_call_item(
                         &call.item_id.clone(),
                         &call.call_id.clone(),
                         &call.name.clone(),
                         &call.arguments.clone(),
                     );
-                    out.push(Self::sse("response.output_item.done", &serde_json::json!({
-                        "type": "response.output_item.done",
-                        "output_index": self.output_index,
-                        "item": item,
-                    })));
+                    out.push(Self::sse(
+                        "response.output_item.done",
+                        &serde_json::json!({
+                            "type": "response.output_item.done",
+                            "output_index": self.output_index,
+                            "item": item,
+                        }),
+                    ));
                     self.output_index += 1;
                 }
             }
@@ -645,10 +665,13 @@ impl ChatSseToResponsesStream {
             })));
         }
         response["output_text"] = serde_json::Value::String(self.msg_text.clone());
-        out.push(Self::sse("response.completed", &serde_json::json!({
-            "type": "response.completed",
-            "response": response,
-        })));
+        out.push(Self::sse(
+            "response.completed",
+            &serde_json::json!({
+                "type": "response.completed",
+                "response": response,
+            }),
+        ));
     }
 
     /// Convert one complete chat SSE `data:` payload into Responses events.
@@ -681,20 +704,26 @@ impl ChatSseToResponsesStream {
 
         self.ensure_created(out);
 
-        let delta = choice.get("delta").cloned().unwrap_or(serde_json::Value::Null);
+        let delta = choice
+            .get("delta")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
 
         // Text deltas.
         if let Some(text) = delta.get("content").and_then(|c| c.as_str()) {
             if !text.is_empty() {
                 self.ensure_message_open(out);
                 self.msg_text.push_str(text);
-                out.push(Self::sse("response.output_text.delta", &serde_json::json!({
-                    "type": "response.output_text.delta",
-                    "item_id": self.msg_item_id,
-                    "output_index": self.output_index,
-                    "content_index": 0,
-                    "delta": text,
-                })));
+                out.push(Self::sse(
+                    "response.output_text.delta",
+                    &serde_json::json!({
+                        "type": "response.output_text.delta",
+                        "item_id": self.msg_item_id,
+                        "output_index": self.output_index,
+                        "content_index": 0,
+                        "delta": text,
+                    }),
+                ));
             }
         }
 
@@ -724,11 +753,14 @@ impl ChatSseToResponsesStream {
                         "arguments": "",
                         "status": "in_progress"
                     });
-                    out.push(Self::sse("response.output_item.added", &serde_json::json!({
-                        "type": "response.output_item.added",
-                        "output_index": self.output_index,
-                        "item": item,
-                    })));
+                    out.push(Self::sse(
+                        "response.output_item.added",
+                        &serde_json::json!({
+                            "type": "response.output_item.added",
+                            "output_index": self.output_index,
+                            "item": item,
+                        }),
+                    ));
                     self.output_index += 1;
                     self.open_calls.insert(
                         idx,
@@ -749,12 +781,15 @@ impl ChatSseToResponsesStream {
                 {
                     if !args.is_empty() {
                         entry.arguments.push_str(args);
-                        out.push(Self::sse("response.function_call_arguments.delta", &serde_json::json!({
-                            "type": "response.function_call_arguments.delta",
-                            "item_id": entry.item_id,
-                            "output_index": self.output_index,
-                            "delta": args,
-                        })));
+                        out.push(Self::sse(
+                            "response.function_call_arguments.delta",
+                            &serde_json::json!({
+                                "type": "response.function_call_arguments.delta",
+                                "item_id": entry.item_id,
+                                "output_index": self.output_index,
+                                "delta": args,
+                            }),
+                        ));
                     }
                 }
                 if let Some(id) = tc.get("id").and_then(|c| c.as_str()) {
@@ -885,7 +920,10 @@ mod tests {
         assert_eq!(req.model, "all");
         assert_eq!(req.messages.len(), 2);
         assert_eq!(req.messages[0].role, "system");
-        assert_eq!(req.messages[0].content.as_ref().unwrap().text(), "Be concise.");
+        assert_eq!(
+            req.messages[0].content.as_ref().unwrap().text(),
+            "Be concise."
+        );
         assert_eq!(req.messages[1].role, "user");
         assert_eq!(req.messages[1].content.as_ref().unwrap().text(), "Hello");
         assert_eq!(req.stream, Some(true));
@@ -914,7 +952,10 @@ mod tests {
         assert_eq!(req.messages.len(), 4);
         assert_eq!(req.messages[0].role, "system");
         assert_eq!(req.messages[1].role, "user");
-        assert!(matches!(req.messages[1].content, Some(MessageContent::Parts(_))));
+        assert!(matches!(
+            req.messages[1].content,
+            Some(MessageContent::Parts(_))
+        ));
         assert_eq!(req.messages[2].role, "assistant");
         assert!(req.messages[2].tool_calls.is_some());
         assert_eq!(req.messages[3].role, "tool");
@@ -1037,7 +1078,7 @@ mod tests {
         let mut acc = String::new();
         while let Some(item) = stream.next().await {
             let bytes = item.unwrap();
-            acc.push_str(&String::from_utf8(bytes.to_vec()).unwrap());
+            acc.push_str(core::str::from_utf8(&bytes).unwrap());
         }
 
         assert!(acc.contains("event: response.created"));
@@ -1067,7 +1108,7 @@ mod tests {
         let mut stream = ChatSseToResponsesStream::new(inner, "all".to_string());
         let mut acc = String::new();
         while let Some(item) = stream.next().await {
-            acc.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+            acc.push_str(core::str::from_utf8(&item.unwrap()).unwrap());
         }
 
         assert!(acc.contains("event: response.output_item.added"));
@@ -1092,7 +1133,7 @@ mod tests {
         let mut stream = ChatSseToResponsesStream::new(inner, "all".to_string());
         let mut acc = String::new();
         while let Some(item) = stream.next().await {
-            acc.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+            acc.push_str(core::str::from_utf8(&item.unwrap()).unwrap());
         }
         assert!(acc.contains("\"delta\":\"He\""));
         assert!(acc.contains("\"delta\":\"y\""));
@@ -1107,7 +1148,7 @@ mod tests {
         let mut stream = ChatSseToResponsesStream::new(inner, "all".to_string());
         let mut acc = String::new();
         while let Some(item) = stream.next().await {
-            acc.push_str(&String::from_utf8(item.unwrap().to_vec()).unwrap());
+            acc.push_str(core::str::from_utf8(&item.unwrap()).unwrap());
         }
         assert!(acc.contains("event: response.created"));
         assert!(acc.contains("event: response.completed"));

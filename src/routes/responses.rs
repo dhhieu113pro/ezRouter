@@ -75,8 +75,7 @@ async fn post_responses_via_chat(
 
     if is_stream {
         let data_stream = chat_res.into_body().into_data_stream();
-        let mapped =
-            data_stream.map(|item| item.map_err(|e| AppError::Internal(e.to_string())));
+        let mapped = data_stream.map(|item| item.map_err(|e| AppError::Internal(e.to_string())));
         let translated =
             ChatSseToResponsesStream::new(Box::pin(mapped), requested_model.to_string());
         Ok(Response::builder()

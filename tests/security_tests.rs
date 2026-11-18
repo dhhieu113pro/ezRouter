@@ -8,7 +8,9 @@ use serde_json::Value;
 use tower::ServiceExt;
 
 fn setup_test_app() -> (axum::Router, AppState, String) {
-    let test_dir = format!("{}/ag-proxy-rust-test-sec-{}", std::env::temp_dir().display(),
+    let test_dir = format!(
+        "{}/ag-proxy-rust-test-sec-{}",
+        std::env::temp_dir().display(),
         uuid::Uuid::new_v4().simple()
     );
     let mut config = Config::parse(
@@ -259,10 +261,11 @@ async fn test_query_token_restriction_and_leak_prevention() {
     let _ = std::fs::remove_dir_all(&test_dir);
 }
 
-
 #[tokio::test]
 async fn test_db_schema_role_migration_and_persistence() {
-    let test_dir = format!("{}/ag-proxy-rust-test-db-role-{}", std::env::temp_dir().display(),
+    let test_dir = format!(
+        "{}/ag-proxy-rust-test-db-role-{}",
+        std::env::temp_dir().display(),
         uuid::Uuid::new_v4().simple()
     );
     let path = std::path::Path::new(&test_dir);
@@ -315,7 +318,9 @@ async fn test_db_schema_role_migration_and_persistence() {
 
     // 4. Fresh DB auto-seeds default key with role 'admin'
     {
-        let fresh_dir = format!("{}/ag-proxy-rust-test-db-fresh-{}", std::env::temp_dir().display(),
+        let fresh_dir = format!(
+            "{}/ag-proxy-rust-test-db-fresh-{}",
+            std::env::temp_dir().display(),
             uuid::Uuid::new_v4().simple()
         );
         let fresh_path = std::path::Path::new(&fresh_dir);

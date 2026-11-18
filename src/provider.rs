@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 
-
 pub const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024; // 16 MB bounded response limit
 
 pub fn deserialize_chat_message_content<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -494,7 +493,12 @@ impl HttpUpstreamProvider {
         }
     }
 
-    pub fn with_client(base_url: Option<String>, api_key: Option<String>, prefix: Option<String>, client: Client) -> Self {
+    pub fn with_client(
+        base_url: Option<String>,
+        api_key: Option<String>,
+        prefix: Option<String>,
+        client: Client,
+    ) -> Self {
         Self {
             base_url,
             api_key,
@@ -631,8 +635,7 @@ impl Provider for HttpUpstreamProvider {
         let url = resolve_chat_completions_url(base_url);
 
         let mut req_to_send = request.clone();
-        req_to_send.model =
-            strip_provider_prefix(&request.model, self.prefix.as_deref());
+        req_to_send.model = strip_provider_prefix(&request.model, self.prefix.as_deref());
 
         tracing::info!(
             upstream_url = %url,
@@ -755,8 +758,7 @@ impl Provider for HttpUpstreamProvider {
         let url = resolve_chat_completions_url(base_url);
 
         let mut upstream_req = request.clone();
-        upstream_req.model =
-            strip_provider_prefix(&request.model, self.prefix.as_deref());
+        upstream_req.model = strip_provider_prefix(&request.model, self.prefix.as_deref());
         upstream_req.stream = Some(true);
 
         tracing::info!(
@@ -866,8 +868,7 @@ impl Provider for HttpUpstreamProvider {
         let url = resolve_embeddings_url(base_url);
 
         let mut req_to_send = request.clone();
-        req_to_send.model =
-            strip_provider_prefix(&request.model, self.prefix.as_deref());
+        req_to_send.model = strip_provider_prefix(&request.model, self.prefix.as_deref());
 
         tracing::info!(
             upstream_url = %url,
@@ -1236,7 +1237,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn test_resolve_embeddings_url() {
         assert_eq!(
@@ -1269,7 +1269,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn test_resolve_image_models_and_generations_url() {
         assert_eq!(
@@ -1297,7 +1296,6 @@ mod tests {
             "https://api.openai.com/v1/images/models"
         );
     }
-
 
     #[test]
     fn test_embedding_serde_single_and_batch() {
@@ -1378,7 +1376,6 @@ mod tests {
         assert_eq!(last.model, "gemini/gemini-2.5-flash");
     }
 
-
     #[test]
     fn test_serde_chat_completion_request_with_tools() {
         let json_data = serde_json::json!({
@@ -1411,7 +1408,6 @@ mod tests {
         assert_eq!(req.tool_choice, Some(serde_json::json!("auto")));
     }
 
-
     #[test]
     fn test_http_provider_debug_redacts_keys() {
         let provider = HttpUpstreamProvider::new(
@@ -1428,7 +1424,6 @@ mod tests {
         assert!(debug_str.contains("https://api.example.com"));
     }
 
-
     #[test]
     fn test_strip_provider_prefix_strips_own_prefix() {
         // Provider `amd`: bare model id is what tokenlab expects upstream.
@@ -1443,38 +1438,37 @@ mod tests {
         );
     }
 
-
     #[test]
     fn test_strip_provider_prefix_preserves_model_namespace() {
         // REGRESSION: the old logic blindly stripped the first `/` segment, turning
         // `nvidia2/nvidia/nemotron-...` into `nemotron-...` for the `nvidia` provider
         // (upstream 404). The new logic must only strip the provider's OWN prefix.
         assert_eq!(
-            strip_provider_prefix(
-                "nvidia2/nvidia/nemotron-3-ultra-550b-a55b",
-                Some("nvidia2")
-            ),
+            strip_provider_prefix("nvidia2/nvidia/nemotron-3-ultra-550b-a55b", Some("nvidia2")),
             "nvidia/nemotron-3-ultra-550b-a55b"
         );
     }
-
 
     #[test]
     fn test_strip_provider_prefix_leaves_unrelated_models_unchanged() {
         // Model does not start with this provider's prefix -> untouched.
         assert_eq!(strip_provider_prefix("foo/bar", Some("amd")), "foo/bar");
-        assert_eq!(strip_provider_prefix("bare-model", Some("amd")), "bare-model");
+        assert_eq!(
+            strip_provider_prefix("bare-model", Some("amd")),
+            "bare-model"
+        );
         // Similar-but-different prefix must NOT be stripped (no partial matches).
-        assert_eq!(strip_provider_prefix("amd2/model", Some("amd")), "amd2/model");
+        assert_eq!(
+            strip_provider_prefix("amd2/model", Some("amd")),
+            "amd2/model"
+        );
     }
-
 
     #[test]
     fn test_strip_provider_prefix_no_prefix_configured() {
         assert_eq!(strip_provider_prefix("amd/model", None), "amd/model");
         assert_eq!(strip_provider_prefix("amd/model", Some("")), "amd/model");
     }
-
 
     #[test]
     fn test_strip_provider_prefix_empty_remainder_unchanged() {
@@ -1573,7 +1567,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn test_regression_plain_string_content() {
         let msg = ChatMessage::new("user", "Hello plain string");
@@ -1588,7 +1581,6 @@ mod tests {
         );
         assert_eq!(deserialized.content_text(), "Hello plain string");
     }
-
 
     #[test]
     fn test_regression_array_content_parts() {
@@ -1615,7 +1607,6 @@ mod tests {
         assert_eq!(parts[0]["text"], "Hello ");
         assert_eq!(parts[1]["text"], "world!");
     }
-
 
     #[test]
     fn test_optional_stream_is_omitted_not_null_when_absent() {

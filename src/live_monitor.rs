@@ -228,12 +228,7 @@ mod tests {
         assert_eq!(active.items[0].provider, "Router");
 
         // Update routing
-        registry.update_routing(
-            &id,
-            "OpenRouter",
-            "gpt-4o",
-            "te***@gmail.com",
-        );
+        registry.update_routing(&id, "OpenRouter", "gpt-4o", "te***@gmail.com");
 
         let active = registry.get_active();
         assert_eq!(active.items.len(), 1);
